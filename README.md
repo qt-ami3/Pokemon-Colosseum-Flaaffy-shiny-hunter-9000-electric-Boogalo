@@ -1,144 +1,172 @@
-# Shiny hunt: St. Performer Diogo's Shadow Flaaffy (Pokémon Colosseum)
+# Shiny hunt — St. Performer Diogo's Shadow Flaaffy (Pokémon Colosseum)
 
-Scripted controller input into Dolphin, plus a hue-based shiny detector, driving
-a soft-reset loop that stops the moment it sees a shiny — or the moment it stops
-being sure of what it is looking at.
+Scripted controller input into Dolphin, a hue-based shiny detector, and a
+closed loop that reads the screen before every action. It resets, replays to
+the battle, fights and snags the Flaaffy, reads the party portrait, and stops
+the moment it sees a shiny — or the moment it stops being sure what it is
+looking at.
+
+## Quick start
+
+Dolphin must be **focused** — input is dropped otherwise — and the game
+running. Start a command, then click into Dolphin.
+
+```sh
+QT_QPA_PLATFORM=xcb dolphin-emu --exec="emulation/wiigamecube/roms/Pokemon Colosseum (Europe) (En,Fr,De,Es,It).ciso"
+
+python scripts/hunt.py check-test    # are all 19 checks reading correctly?
+python scripts/hunt.py fight         # battle loop only, from a battle in progress
+python scripts/hunt.py loop --max 1  # reset -> start -> combat_start, no vision
+python scripts/hunt.py run           # the hunt (needs jitter enabled, below)
+```
+
+`run` logs to the terminal and to `runs/<timestamp>/hunt.log` — `tail -f` it
+from another terminal.
+
+## How one attempt works
+
+```
+reset (Z, bound to Dolphin's Reset hotkey)
+  -> start.toml          title screen -> save loaded -> back to Diogo
+  -> combat_start.toml   talk to Diogo, battle begins
+  -> closed loop, per turn at the command menu:
+       UMBREON  -> BITE at Flaaffy, unless its HP is below the gate
+       ESPEON   -> throw a Poké Ball
+       broke out?     the next turn just comes round again
+       Flaaffy gone?  open the party
+                        listed     -> read the portrait -> shiny? STOP : reset
+                        not listed -> it fainted -> reset
+```
+
+### Why the shiny check happens *after* the catch
+
+A Shadow Pokémon's PID is assigned at first encounter and is guaranteed *not*
+shiny against the NPC trainer's IDs. Snagging does not change the PID — it
+changes the Original Trainer to you, and shininess is that PID against **your**
+TID/SID ([Bulbapedia](https://bulbapedia.bulbagarden.net/wiki/Shadow_Pok%C3%A9mon)).
+So it can never render shiny in battle; it must be caught and read off the
+party portrait. XD shiny-locks this outright; Colosseum does not, which is the
+only reason this hunt is possible.
+
+### Why it reboots instead of loading a savestate
+
+Colosseum seeds its RNG from the console clock at boot
+([pokemonrng.com](https://www.pokemonrng.com/emulator-colosseum-general/)). A
+savestate restores that RNG state verbatim, so the outcome depends only on how
+many frames pass before the battle — with J frames of jitter you can reach
+about J distinct Flaaffy, and the odds a shiny is among them are
+`1-(1-1/8192)^J`: about 2% at J=150. The other 98% of the time the hunt cannot
+succeed at all. Rebooting reseeds from the clock.
+
+**Keep Custom RTC off** (Config → Advanced) or the boot seed is pinned and you
+are back in that dead end.
+
+## Files
 
 ```
 main.py                 controller scripting: Dolphin pipe input + a Controller API
-scripts/vision.py       shiny vs normal classifier (hue histograms)
-scripts/hunt.py         the hunt loop and all the calibration tools
-scripts/pad_config.py   bind a Dolphin port to the pipe, and put it back
-scripts/example.py      example input script for main.py
 hunt.toml               everything tunable, commented
-assets/                 your normal.png / shiny.png reference crops
-runs/                   per-run logs and frames (created on first run)
+start.toml              recorded: title screen -> standing at Diogo
+combat_start.toml       recorded: talk to Diogo, start the battle
+controller_map.json     your pad's button/axis indices (from record.py calibrate)
+assets/normal.png       reference party portraits for the shiny classifier
+assets/shiny.png
+assets/states/*.png     whole-window grabs the [checks] crop their regions from
+scripts/hunt.py         the hunt, the battle loop, and all calibration commands
+scripts/vision.py       shiny vs normal classifier (hue histograms)
+scripts/states.py       screen checks: zncc / red / hue / hpbar modes
+scripts/wincap.py       window capture + game viewport detection
+scripts/record.py       record your real pad into a replayable route
+scripts/probe.py        send inputs, capture, crop regions — for mapping new UI
+scripts/pad_config.py   bind a Dolphin port to the pipe, and put it back
+scripts/verify_inputs.py  exercise every input so you can watch it register
+scripts/example.py      example input script for main.py
+runs/                   per-run logs, CSV and frames
+archive/                superseded files; delete whenever
 ```
 
-## How it works
+## Setup from scratch
 
-One attempt is: **reboot → replay to Diogo → battle → snag the Flaaffy → read
-the party sprite → classify.** Dud, reset, repeat. Each replayed file is
-verified against a screen state before the next one runs, so drift is caught
-rather than compounded.
-
-Three design points worth knowing, because they are the ones that can bite:
-
-**The shiny check has to happen after the capture.** A Shadow Pokémon's PID is
-assigned at first encounter and is guaranteed *not* shiny against the NPC
-trainer's IDs. Snagging does not change the PID — it changes the Original
-Trainer to you, and shininess is that PID against *your* TID/SID
-([Bulbapedia](https://bulbapedia.bulbagarden.net/wiki/Shadow_Pok%C3%A9mon)). So
-it can never render shiny in battle; you must catch it and read the party
-sprite. XD shiny-locks this outright; Colosseum does not, which is the only
-reason the hunt is possible.
-
-**Colosseum has no controller soft reset.** B+X+Start is Pokémon XD only
-([Bulbapedia](https://bulbapedia.bulbagarden.net/wiki/Soft_reset),
-[PokéBase](https://pokemondb.net/pokebase/152716/how-to-softreset-in-every-pokemon-game-its-in)).
-So the reset is Dolphin's Reset hotkey sent with `wtype`, not a pad input. Bind
-it under Options → Hotkey Settings → General → Reset; it has no default.
-
-**It must be a reboot, not a savestate.** Colosseum seeds its RNG from the
-console clock at boot and advances it deterministically
-([pokemonrng.com](https://www.pokemonrng.com/emulator-colosseum-general/),
-[aldelaro5](https://aldelaro5.wordpress.com/2018/09/09/controlling-luck-in-video-games-an-explanation-of-the-rng-manipulation-on-pokemon-colosseum-and-xd/)).
-A savestate restores that RNG state verbatim, so the Pokémon you get depends
-only on how many frames pass before the battle starts — with J frames of jitter
-you can reach about J distinct Flaaffy, and the odds a shiny is among them are
-`1-(1-1/8192)^J`, about 2% at J=150. The other 98% of the time the hunt cannot
-succeed at all. Rebooting reseeds from the clock. It costs ~40s per attempt
-instead of ~5s, and that trade isn't optional. Keep **Custom RTC off**
-(Config → Advanced) or the boot seed is pinned and you're back in the dead end.
-
-**The detector reads hue, not colour distance.** Your two crops differ in
-brightness (V 0.48 vs 0.72) as much as in palette, so an RGB-distance detector
-would mostly be measuring the lighting. Hue separates them cleanly — normal
-Flaaffy's pink nose sits at ~335°, shiny's orange at ~13° — and survives the
-Shadow aura after black-level + grey-world colour-cast removal. `selftest`
-classifies 18 deliberately degraded copies of your references; all 18 pass.
-
-Ambiguity always stops the hunt rather than continuing. A false stop costs you a
-glance at a screenshot; a false "normal" costs you the shiny permanently.
-
-## Setup, in order
-
-Everything below needs the game running, which is why it is yours to do rather
-than something I could finish.
-
-**1. Bind Port 1 to the pipe** (Colosseum only reads Port 1, so this displaces
-the HORIPAD currently configured there; it backs the file up first, and Dolphin
-must be closed because it rewrites its config on exit):
-
-```
-python main.py --setup                    # creates the FIFO + a Dolphin profile
-python scripts/pad_config.py pipe --port 1
+```sh
+python main.py --setup                      # create the FIFO + a Dolphin profile
+python scripts/pad_config.py pipe --port 1  # bind Port 1 (backs up, needs Dolphin closed)
+python scripts/pad_config.py restore        # undo
 ```
 
-Undo at any time with `python scripts/pad_config.py restore`.
+Colosseum only reads **Port 1**, so this displaces whatever real pad is there.
 
-**2. Smoke-test the pad.** Start the game, then:
+Then in Dolphin: **Options → Hotkey Settings → Device `Pipe/0/pipe1`**, bind
+`General/Reset` to the expression `Button Z`. Keyboard hotkeys do **not** work
+here — Dolphin polls the keyboard through XInput2/XWayland, and synthetic keys
+never arrive. Routing the reset down the pipe sidesteps that entirely, which is
+why nothing in the route presses Z for any other purpose.
 
-```
-python scripts/example.py     # via: python main.py scripts/example.py
-```
+## Before a real hunt
 
-If the menus respond, pipe input works. If `main.py` sits at "waiting for
-Dolphin to open ...", the port is not bound to `Pipe/0/pipe1`.
+`hunt.py run` refuses to start until you set this in `hunt.toml`:
 
-**3. Save in-game next to Diogo** so the route has the least walking to do
-after each reboot, and bind the Reset hotkey. Leave Dolphin focused, windowed,
-and unmoved for the whole hunt — keystrokes go to the focused window.
-
-**4. Calibrate the capture region.** Get into the battle by hand, then:
-
-```
-python scripts/hunt.py snap                              # full screenshot
-python scripts/hunt.py crop --region X,Y,W,H --from snap.png
+```toml
+jitter = [0, 150]        # ships as [0, 0], which makes a hunt impossible
 ```
 
-Aim at Flaaffy's head and nose — the pink/orange nose is the signal. Put the
-rectangle in `hunt.toml` as `capture.region`, then watch it live:
+## Tuning
 
-```
-python scripts/hunt.py watch
-```
+| knob | what it does |
+|---|---|
+| `route.jitter` | RNG divergence before the battle. Must be non-zero. |
+| `detect.margin`, `detect.min_score` | how sure the classifier must be; `selftest` prints real scores |
+| `decide.uncertain_tolerance` | consecutive inconclusive *shiny checks* before stopping (default 2) |
+| `decide.error_tolerance` | consecutive crashes before giving up (default 5) |
+| `battle.weaken_while` | HP gate; below it, stop attacking so BITE cannot KO the Flaaffy |
+| `dolphin.speed` | converts route frames to real time; route timings were tuned at `EmulationSpeed = 2.0` |
 
-You want a steady `normal margin=-0.8` or so. Weak or flapping verdicts mean the
-region is off, too tight, or catching the camera pan.
+## Adding or fixing a check
 
-**5. Tune the route timings.** `route.boot` assumes six A presses get you from
-the reboot into the battle:
+Regions are **fractions of the game viewport**, not screen pixels, so they
+survive the window moving, resizing or going fullscreen.
 
-```
-python scripts/hunt.py route --sample
-```
-
-Adjust `taps`/`gap`/`wait` in `hunt.toml` until it lands in the battle with
-Flaaffy on screen every time.
-
-**6. Hunt.**
-
-```
-python scripts/hunt.py run            # or --max 20 for a trial
+```sh
+python scripts/probe.py --press A --wait 2 --out shot.png        # navigate + capture
+python scripts/probe.py --out crop.png --crop x=0.5,0.1,0.1,0.05 # preview a region
+python scripts/hunt.py check-test                                 # score every check now
+python scripts/hunt.py check-test --from assets/states/party_open.png
 ```
 
-Progress prints per attempt; `runs/<timestamp>/log.csv` records every verdict and
-`runs/<timestamp>/frames/` keeps the evidence. On a hit you get a critical
-desktop notification, a terminal bell, and the battle is left sitting there with
-all inputs released — the catch is yours to make, deliberately, rather than
-something a script fumbles.
+Check modes:
 
-## Tuning notes
+- `zncc` — structural match against a template. Templates may be whole-window
+  grabs; they are cropped to the region automatically.
+- `red` — count the menu cursor's saturated red. Use this over any region on
+  the battle menu.
+- `hue` — same idea for any colour (`hue_range`), e.g. the cyan target arrow.
+- `hpbar` — fraction of an HP bar that is filled.
 
-- `detect.margin` / `detect.min_score` — raise for stricter, more stop-happy
-  behaviour; `selftest` prints the actual scores to calibrate against.
-- `decide.uncertain_tolerance` — consecutive inconclusive attempts allowed
-  before stopping. Default 2. Raising it buys unattended endurance at the cost
-  of the safety property above.
-- `dolphin.speed` — converts route frames to real time. Left at 1.0, route
-  numbers are real-time frames (60 = 1 real second) regardless of emulation
-  speed, which is how the current timings were tuned at `EmulationSpeed = 2.0`.
-  Changing Dolphin's speed setting invalidates them either way.
-- `dolphin.require_focus` — keystrokes go to the focused window, so the hunt
-  refuses to send F1 unless Dolphin has focus. Don't turn this off.
+**Keep regions tight.** The bag's whole title bar scores 0.925 between
+different pockets because it is mostly identical chrome; the pocket title alone
+scores 0.145. A wide region containing mostly the same pixels cannot
+discriminate.
+
+## Gotchas worth knowing
+
+**Focus.** Dolphin drops all input when its window is not focused, and `wtype`
+keystrokes never reach it at all. Typing in the terminal steals focus, so you
+cannot drive the game and talk to a script at the same time.
+
+**The battle menu is semi-transparent.** The 3D scene shows through it, so
+structural matching over the menu box swings with whatever animates behind.
+That is what the `red` and `hue` modes are for.
+
+**Menus remember where the cursor was left.** Nothing counts presses; every
+`until` step presses until the screen says it has arrived, and zero times when
+it is already there.
+
+**Menus animate in.** Checking instantly after opening one reads the old
+screen. `first_settle_frames` on an `until` step waits before the first look —
+without it, a check on a menu you are already in fails and the loop presses its
+way all the way around.
+
+**Timing.** Route waits are real-time frames (60 = 1 real second), pinned to
+Dolphin's current `EmulationSpeed`. Changing it invalidates the recordings.
+
+See `FINDINGS.md` for the full mapping session: every measured region, the
+bugs that live testing surfaced, and what is still unproven.
