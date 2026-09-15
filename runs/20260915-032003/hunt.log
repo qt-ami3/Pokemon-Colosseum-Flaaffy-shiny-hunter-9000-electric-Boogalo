@@ -1,0 +1,55 @@
+run directory: /home/aknu/temp/runs/20260915-032003
+log: /home/aknu/temp/runs/20260915-032003/hunt.log   (tail -f it)
+started 2026-09-15T03:20:03
+
+--- attempt 1  [03:20:03]  0.0 min
+      weaken
+      throw_ball
+      Flaaffy is low -- holding off the attack
+      stall
+      throw_ball
+      Flaaffy is low -- holding off the attack
+      stall
+      throw_ball
+      Flaaffy is low -- holding off the attack
+      stall
+      throw_ball
+      Flaaffy is low -- holding off the attack
+      stall
+      throw_ball
+      Flaaffy is low -- holding off the attack
+      stall
+      throw_ball
+      Flaaffy is off the field -- checking the party
+      normal     margin=-0.836 px=4226   normal=0.0995 shiny=0.0089
+      normal     margin=-0.836 px=4226   normal=0.0995 shiny=0.0089
+      normal     margin=-0.836 px=4226   normal=0.0995 shiny=0.0089
+      normal     margin=-0.836 px=4226   normal=0.0995 shiny=0.0089
+      normal     margin=-0.836 px=4226   normal=0.0995 shiny=0.0089
+      normal     margin=-0.836 px=4226   normal=0.0995 shiny=0.0089
+      normal     margin=-0.834 px=1676   normal=0.0996 shiny=0.0090
+      normal     margin=-0.834 px=1676   normal=0.0996 shiny=0.0090
+      normal     margin=-0.834 px=1676   normal=0.0996 shiny=0.0090
+      snagged, not shiny -> reset
+    => reset  (shiny=0 normal=9 of 9 frames)
+
+--- attempt 2  [03:26:14]  6.2 min  19/hr  reset=1
+
+finished 2026-09-15T03:26:27: interrupted
+tally: reset=1
+
+========================================================================
+  Hunt finished
+  interrupted after 2 attempts (6 min)
+/home/aknu/temp/runs/20260915-032003
+========================================================================
+
+{
+  "outcome": "interrupted",
+  "attempts": 2,
+  "minutes": 6.4,
+  "tally": {
+    "reset": 1
+  },
+  "run_dir": "/home/aknu/temp/runs/20260915-032003"
+}

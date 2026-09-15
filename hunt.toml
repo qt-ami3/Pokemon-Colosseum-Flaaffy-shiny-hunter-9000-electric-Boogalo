@@ -1,0 +1,400 @@
+# Shiny hunt config -- St. Performer Diogo's Shadow Flaaffy (Pokemon Colosseum)
+#
+# Everything you will need to tune lives in this file; hunt.py does not need
+# editing.  Run `python scripts/hunt.py selftest` after any change to [detect].
+
+[dolphin]
+pipe = "pipe1"          # FIFO name under ~/.local/share/dolphin-emu/Pipes/
+fps = 60.0
+speed = 1.0             # set to Dolphin's emulation speed, e.g. 2.0 at 200%
+process = "dolphin-emu" # hunt aborts if this process disappears
+app_id = "dolphin"      # window app_id, matched case-insensitively
+require_focus = true    # never send a hotkey unless Dolphin is the focused window
+
+[capture]
+# Screen rectangle holding Flaaffy's head during the battle intro, in global
+# compositor coordinates: [x, y, width, height].  Leave empty to capture the
+# whole screen (useful only for calibration).  Find it with:
+#   python scripts/hunt.py snap            -> full screenshot
+#   python scripts/hunt.py crop --region X,Y,W,H --from <snap.png>
+#   python scripts/hunt.py watch           -> live verdicts, tune until stable
+# The party portrait Flaaffy's sprite appears in, as a fraction of the game
+# viewport. Validated against assets/normal.png (0.0992 vs the reference's
+# 0.1013). Crop tight: including the purple frame drags the margin from
+# -0.836 to -0.185. Flaaffy lands in the right column, row 2 -- the first free
+# slot after SLUGMA.
+region = [0.47872, 0.28, 0.06383, 0.08333]
+output = ""             # grim output name (e.g. "DP-1"); only used when region is empty
+
+[references]
+normal = "assets/normal.png"
+shiny  = "assets/shiny.png"
+
+[sample]
+# After the route finishes, grab the region repeatedly and classify every frame.
+# Multiple frames beat one lucky screenshot: the camera pans and the Shadow aura
+# pulses, so some frames are unusable.
+duration_s = 8.0
+interval_s = 0.35
+settle_frames = 0       # extra frames to wait after the route before sampling
+
+[detect]
+sat_min = 0.25          # pixels below this saturation carry no hue information
+val_min = 0.20
+min_subject_px = 150    # fewer than this = Flaaffy is not in the region
+margin = 0.15           # |margin| below this is "uncertain", never a guess
+min_score = 0.030       # best reference score below this is "uncertain" too
+white_balance = "black+grey"   # none | grey | black+grey -- see scripts/vision.py
+
+[decide]
+shiny_votes = 1         # one confident shiny frame stops the hunt
+normal_votes = 3        # this many confident normal frames to call it a dud
+uncertain_tolerance = 2 # consecutive inconclusive SHINY CHECKS before stopping
+                        # (only the shiny verdict -- desyncs and faints just reset)
+error_tolerance = 5     # consecutive crashes before giving up
+max_attempts = 0        # 0 = unlimited
+keep_normal_frames = 200  # prune older dud crops; shiny/uncertain are kept forever
+run_dir = "runs"
+notify_command = ""     # optional shell command run when the hunt stops
+
+# ---------------------------------------------------------------------------
+# The route: how one attempt goes from "ready" back to "Flaaffy on screen".
+#
+# WHY THIS REBOOTS INSTEAD OF LOADING A SAVESTATE
+#   Colosseum seeds its RNG from the console clock at boot and then advances it
+#   deterministically.  A savestate restores that RNG state verbatim -- nothing
+#   re-reads the clock -- so the Pokemon you get is purely a function of how
+#   many frames pass between loading the state and the battle starting.  With a
+#   jitter of J frames you can only ever reach about J distinct Flaaffy, so the
+#   odds that a shiny exists anywhere in that pool are 1-(1-1/8192)^J: about 2%
+#   for J=150.  The other 98% of the time the hunt cannot succeed at all, no
+#   matter how long it runs.  Rebooting reseeds from the clock, which makes the
+#   pool effectively unbounded.  It costs ~40s per attempt instead of ~5s, and
+#   that trade is not optional.
+#
+#   Keep Dolphin's Custom RTC OFF (Config -> Advanced).  Turning it on pins the
+#   boot seed to a fixed value and reintroduces the same dead end.
+#
+# BIND THE RESET HOTKEY TO THE PIPE, NOT THE KEYBOARD
+#   Options -> Hotkey Settings -> set Device to Pipe/0/pipe1, then bind
+#   General/Reset to the expression `Button Z`.  Dolphin hotkeys accept any
+#   input device, so the reset travels down the same pipe as everything else.
+#
+#   Keyboard injection does not work here: Dolphin polls the keyboard through
+#   XInput2/XWayland, and wtype's virtual keyboard uploads its own keymap that
+#   XWayland does not translate, so synthetic keys arrive as nothing while
+#   physical keys work fine.  Going through the pipe sidesteps that completely
+#   and works on native Wayland too.
+#
+# The timings below are the ones you tuned by hand, in frames (60 = 1 second of
+# REAL time; at 200% emulation speed that is 2 seconds of game time).
+#
+# Step forms:
+#   {wait = 600}                                  idle frames
+#   {jitter = [0, 120]}                           random idle frames
+#   {key = "F10", mods = ["shift"], frames = 30}  Dolphin hotkey via wtype
+#   {press = ["B","X"], frames = 20}              hold a pad combo, then release
+#   {tap = "A", times = 3, gap = 30}              tap a button repeatedly
+#   {mash = "A", seconds = 20.0, interval = 20}   tap on an interval
+#   {stick = [1.0, 0.0], frames = 60}             hold the stick, then centre
+#   {comment = "..."}                             documentation only
+# ---------------------------------------------------------------------------
+
+[route]
+reset = [
+    { comment = "Reset comes through the pipe, not the keyboard: bind Dolphin's" },
+    { comment = "General/Reset hotkey to device Pipe/0/pipe1, expression `Button Z`." },
+    { comment = "Nothing else in the route may press Z." },
+    { press = ["Z"], frames = 10 },
+    { wait = 120 },
+]
+
+# The attempt, played in order.  Each file is recorder output (bare `{ ... },`
+# lines) or a normal TOML file with a top-level `steps` array.
+# Replayed in order, each verified against a screen state before moving on
+# (see [route.checkpoints]) so drift is caught instead of compounding.
+# Replay only as far as the battle starting. Everything from there is driven
+# by what is on screen (see [checks] and [battle]) -- catch_loop.toml is no
+# longer replayed, because the closed loop does the fighting and catching.
+files = [
+    "start.toml",         # title screen -> save loaded -> back to Diogo
+    "combat_start.toml",  # talk to Diogo, start the battle
+]
+
+
+# Idle after the last file before resetting, so you can see where it ended up.
+end_delay_frames = 180    # 3 seconds
+
+# RNG divergence, inserted immediately before the named file.  [0, 0] disables
+# it, which is right while you are verifying that the loop replays cleanly --
+# fixed timings are reproducible.  Set it to something like [0, 150] before a
+# real hunt: without it every attempt re-rolls the identical Flaaffy, and
+# `hunt.py run` refuses to start until you do.
+# The PID is assigned the moment the encounter begins and never changes after,
+# so this has to land BEFORE the battle starts -- jitter later changes nothing.
+jitter = [0, 150]
+jitter_before = "combat_start.toml"
+
+
+# After each file, wait for this screen state before continuing.  Not reaching
+# it means the replay drifted -- that attempt is abandoned and reset, which
+# costs one attempt instead of silently mashing A at the wrong screen.
+# Keys are file names; values are assets/states/<name>.png.  Comment out any
+# checkpoint you have not captured a template for yet.
+[route.checkpoints]
+# "start.toml" = "in_front_of_diogo"
+# "combat_start.toml" = "battle_menu"
+# "catch_loop.toml" = "ball_thrown"
+
+# ---------------------------------------------------------------------------
+# Screen states.  Replaying recorded inputs blind drifts; this closes the loop
+# by checking what is on screen before every action.
+#
+# One region is compared against a reference crop per state, scored by
+# zero-mean normalised cross-correlation.  Pick a region over static UI chrome
+# (the menu box, the text frame) -- NOT over the Pokemon or the background,
+# which animate and will never match twice.
+#
+#   python scripts/hunt.py snap                      # find the UI region
+#   put it in states.region below, then, in each battle screen:
+#   python scripts/hunt.py state-add command_menu
+#   python scripts/hunt.py state-list                # check nothing is confusable
+#   python scripts/hunt.py state-watch               # live check
+#   python scripts/hunt.py fight                     # battle loop only
+# ---------------------------------------------------------------------------
+
+[states]
+dir = "assets/states"
+threshold = 0.90         # below this the screen counts as unrecognised
+poll_interval_s = 0.25
+unknown_tolerance = 12   # consecutive unrecognised polls before giving up
+max_seconds = 300        # battle timeout -> reset
+
+# ---------------------------------------------------------------------------
+# What to do in each state.  Keys are state names, i.e. assets/states/<name>.png
+#
+#   do              = [ route steps ]   inputs to send
+#   outcome         = "continue" | "caught" | "fainted" | "reset"
+#   check_shiny     = true              run the sprite classifier here
+#   on_normal       = "reset"|"continue"  what to do when it is not shiny
+#   once            = true              do not re-fire while the state persists
+#   cooldown_frames = 30                settle time after acting
+#
+# These are placeholders -- the state names must match the crops you capture.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Checks: independent yes/no questions, each about a fraction of the game
+# viewport (NOT screen pixels -- niri gives no absolute window position on a
+# scrolling layout, so screen coordinates break the moment anything moves).
+#
+# Two modes:
+#   zncc  structural match against a template, cropped by the same fraction
+#   red   count the cursor's saturated red. The battle menu is SEMI-TRANSPARENT
+#         -- the 3D scene shows through it -- so structural matching over the
+#         menu box swings with whatever animates behind. Measured: 0.23-0.26
+#         with the cursor, 0.000 without.
+#
+# All regions below were measured live and verified. Recheck with:
+#   python scripts/hunt.py check-test
+# ---------------------------------------------------------------------------
+
+[checks.cursor_fight]
+region = [0.1064, 0.7833, 0.0253, 0.0333]
+mode = "red"
+threshold = 0.05
+
+[checks.cursor_items]
+region = [0.3271, 0.7833, 0.0253, 0.0333]
+mode = "red"
+threshold = 0.05
+
+[checks.cursor_pkmn]
+region = [0.1064, 0.8433, 0.0253, 0.0333]
+mode = "red"
+threshold = 0.05
+
+[checks.cursor_call]
+region = [0.3271, 0.8433, 0.0253, 0.0333]
+mode = "red"
+threshold = 0.05
+
+# Flaaffy's name plate in the opposing slot: present means still catchable.
+# Name only -- excludes the HP bar and status badge, which change constantly.
+[checks.flaaffy_on_field]
+region = [0.69149, 0.11467, 0.09043, 0.03]
+template = "states/flaaffy_on_field.png"
+threshold = 0.80
+
+# The bag's pocket title. BALLS vs ITEMS scores 0.145, so it discriminates.
+# (The whole title BAR scores 0.925 -- mostly identical chrome. Keep it tight.)
+[checks.bag_balls_pocket]
+region = [0.6482, 0.1092, 0.0997, 0.0400]
+template = "states/bag_balls.png"
+# 0.65, not 0.80: the bag panel is semi-transparent, so the scene behind
+# drags the score down. BALLS vs ITEMS is 0.145, so there is a wide gap
+# between "not confident" and "wrong pocket" -- being strict here only made
+# it cycle all six pockets to get back to the one it started on.
+threshold = 0.65
+
+# First row of the ball pocket. The BALLS pocket holds only POKe BALL + CANCEL.
+[checks.bag_row0_pokeball]
+region = [0.4947, 0.3233, 0.1901, 0.0400]
+template = "states/bag_balls.png"
+threshold = 0.65
+
+[checks.party_open]
+region = [0.0279, 0.8133, 0.6097, 0.0992]
+template = "states/party_open.png"
+threshold = 0.80
+
+# Move menu, same 2x2 grid as the command menu and the same red arrow.
+# UMBREON: BITE | SECRET POWER / TAUNT | SNATCH
+# ESPEON:  CONFUSION | RETURN / REFLECT | HELPING HAND
+# NB a whole-menu red scan is useless here -- the "MOVE TYPE" badge is pink
+# too. These are tight on the arrow.
+[checks.move_tl]
+region = [0.1017, 0.7767, 0.0253, 0.0383]
+mode = "red"
+threshold = 0.05
+
+[checks.move_tr]
+region = [0.3657, 0.7767, 0.0253, 0.0383]
+mode = "red"
+threshold = 0.05
+
+[checks.move_bl]
+region = [0.1017, 0.8350, 0.0253, 0.0383]
+mode = "red"
+threshold = 0.05
+
+[checks.move_br]
+region = [0.3657, 0.8350, 0.0253, 0.0383]
+mode = "red"
+threshold = 0.05
+
+# The PP / MOVE TYPE panel, which only exists once the move list is open.
+# Needed because the command menu's FIGHT arrow sits at almost the same place
+# as the move list's top-left arrow, so move_tl alone cannot tell them apart.
+[checks.move_menu]
+region = [0.6217, 0.7642, 0.3165, 0.1192]
+template = "states/move_menu.png"
+threshold = 0.80
+
+# Flaaffy's HP bar fill, 0-1. Gates the attack: BITE hits hard enough that
+# attacking all the way down KOs it, which wastes the whole attempt.
+[checks.flaaffy_hp_high]
+region = [0.7298, 0.1567, 0.1981, 0.0167]
+mode = "hpbar"
+threshold = 0.35
+
+# Which of your two Pokemon the game is asking for. Colosseum is a DOUBLE
+# battle: both get an input before the turn executes. Tight on the text --
+# the whole name box scores 0.733 because it is mostly identical chrome.
+[checks.turn_umbreon]
+region = [0.0978, 0.6900, 0.1360, 0.0480]
+template = "states/battle_menu.png"
+threshold = 0.80
+
+[checks.turn_espeon]
+region = [0.0978, 0.6900, 0.1360, 0.0480]
+template = "states/turn_espeon.png"
+threshold = 0.80
+
+# Item target selection, a cyan arrow beside the chosen opponent's panel.
+# Cyan (hue ~185), not the red of the command menu. Measured 0.298 vs 0.000.
+[checks.target_flaaffy]
+region = [0.5359, 0.1267, 0.0440, 0.0667]
+mode = "hue"
+hue_range = [175, 205]
+threshold = 0.05
+
+[checks.target_shroomish]
+region = [0.5359, 0.1867, 0.0440, 0.0667]
+mode = "hue"
+hue_range = [175, 205]
+threshold = 0.05
+
+# FLAAFFY's name in the snag slot: present means snagged, absent means fainted.
+[checks.flaaffy_in_party]
+region = [0.56915, 0.28667, 0.10638, 0.03667]
+template = "states/flaaffy_in_party.png"
+threshold = 0.80
+
+# ---------------------------------------------------------------------------
+# HOW SHINY WORKS HERE, because it drives this whole section:
+# A Shadow Pokemon's PID is assigned at first encounter and is guaranteed NOT
+# shiny against the NPC trainer's IDs. Snagging does not change the PID -- it
+# changes the Original Trainer to you, and shininess is PID vs YOUR TID/SID.
+# So it can never render shiny in battle; it has to be caught, and the answer
+# only becomes visible on the party portrait.
+#
+# Per turn, at the command menu:
+#   Flaaffy on the field -> throw_ball
+#   Flaaffy gone         -> open_party; listed = snagged (read the portrait),
+#                           not listed = fainted -> reset
+# ---------------------------------------------------------------------------
+
+[battle]
+anchor_any = ["cursor_fight", "cursor_items", "cursor_pkmn", "cursor_call"]
+weaken_while = "flaaffy_hp_high"   # attack only while HP is above the gate
+weaken_fallback = "stall"          # below it, stop attacking
+max_actions = 40           # actions in one battle before giving up -> reset
+action_cooldown_frames = 120
+party_cooldown_frames = 110
+
+
+# Verified live. `until` cycles its button list, so alternating the two axes
+# reaches any cell of the 2x2 menu from any other -- and presses ZERO times
+# when the cursor is already there, which is what makes menu memory a non-issue.
+#   FIGHT  ITEMS
+#   PKMN   CALL
+throw_ball = [
+    { until = "cursor_items", press = ["D_UP", "D_RIGHT"], max = 4 },
+    { tap = "A" },
+    { until = "bag_balls_pocket", press = "D_RIGHT", max = 6, first_settle_frames = 45 },
+    { until = "bag_row0_pokeball", press = "D_UP", max = 8 },
+    { tap = "A" },
+    { tap = "A" },   # the USE / CANCEL prompt -- USE is preselected
+    { until = "target_flaaffy", press = "D_UP", max = 4 },
+    { tap = "A" },   # throw
+]
+
+# UMBREON chips Flaaffy with BITE (top-left slot), targeting Flaaffy rather
+# than Shroomish. Selected by looking at the cursor, so it survives the move
+# cursor being left elsewhere by a previous turn.
+#   BITE | SECRET POWER
+#   TAUNT| SNATCH
+weaken = [
+    { until = "cursor_fight", press = ["D_UP", "D_LEFT"], max = 4 },
+    { tap = "A" },
+    { require = "move_menu" },
+    { until = "move_tl", press = ["D_UP", "D_LEFT"], max = 4 },
+    { tap = "A" },
+    { until = "target_flaaffy", press = "D_UP", max = 4 },
+    { tap = "A" },
+]
+
+# Below the HP gate: SNATCH (bottom-right), no damage, no KO risk.
+stall = [
+    { until = "cursor_fight", press = ["D_UP", "D_LEFT"], max = 4 },
+    { tap = "A" },
+    { require = "move_menu" },
+    { until = "move_br", press = ["D_DOWN", "D_RIGHT"], max = 4 },
+    { tap = "A" },
+]
+
+open_party = [
+    { until = "cursor_pkmn", press = ["D_DOWN", "D_LEFT"], max = 4 },
+    { tap = "A" },
+    { require = "party_open" },
+]
+
+# Colosseum is a double battle: both of your Pokemon are asked for an action
+# each turn. ESPEON throws the ball; UMBREON chips Flaaffy's HP with a move
+# that cannot KO it, which raises the catch rate and so shortens the hunt.
+# Both lean on non-damaging moves where possible -- fewer animations to sit
+# through, and a KO'd Flaaffy is a wasted attempt.
+[battle.turns]
+turn_espeon = "throw_ball"
+turn_umbreon = "weaken"

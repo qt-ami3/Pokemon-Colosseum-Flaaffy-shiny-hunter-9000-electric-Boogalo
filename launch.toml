@@ -1,0 +1,13 @@
+    # Emulator launch / title menu sequence (from timing.md).
+    # Equivalent to: wait_s(22); tap('A'); wait_s(4); tap('A');
+    #                wait_s(6); tap('A'); wait_s(2); tap('UP'); tap('A')
+    # frames/gap are spelled out to match main.py's tap() defaults exactly.
+    { wait = 1320 },
+    { tap = "A", frames = 3, gap = 3 },
+    { wait = 240 },
+    { tap = "A", frames = 3, gap = 3 },
+    { wait = 360 },
+    { tap = "A", frames = 3, gap = 3 },
+    { wait = 120 },
+    { tap = "UP", frames = 3, gap = 3 },
+    { tap = "A", frames = 3, gap = 3 },

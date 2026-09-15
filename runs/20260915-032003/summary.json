@@ -1,0 +1,9 @@
+{
+  "outcome": "interrupted",
+  "attempts": 2,
+  "minutes": 6.4,
+  "tally": {
+    "reset": 1
+  },
+  "run_dir": "/home/aknu/temp/runs/20260915-032003"
+}
